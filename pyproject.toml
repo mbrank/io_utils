@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "io_utils"
+version = "0.1.0"
+description = "VTK / dat / h5 / pickle / coordinate-transform helpers shared across simulation projects."
+authors = [{name = "Matic Brank"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "h5py",
+]
+
+[project.urls]
+Homepage = "https://github.com/mbrank/io_utils"
+
+[tool.setuptools]
+py-modules = ["io_utils"]

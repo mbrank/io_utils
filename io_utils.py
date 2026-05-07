@@ -3,6 +3,40 @@ import numpy as np
 import copy
 import os
 import shutil
+import pickle
+import h5py
+
+
+# ---------------------------------------------------------------------------
+# Pickle helpers
+# ---------------------------------------------------------------------------
+def save_object(obj, filename):
+    """Save a Python object to ``filename`` using pickle protocol 2."""
+    with open(filename, "wb") as f:
+        pickle.dump(obj, f, protocol=2)
+
+
+def load_object(filename):
+    """Load a previously pickled Python object from ``filename``."""
+    with open(filename, "rb") as f:
+        return pickle.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Coordinate transforms
+# ---------------------------------------------------------------------------
+def cart_to_cyl(x, y, z):
+    """Convert Cartesian (x, y, z) to cylindrical (r, theta, z); theta in radians."""
+    r = np.sqrt(x ** 2 + y ** 2)
+    theta = np.arctan2(y, x)
+    return r, theta, z
+
+
+def cyl_to_cart(r, theta, z):
+    """Convert cylindrical (r, theta, z) to Cartesian (x, y, z); theta in radians."""
+    x = r * np.cos(theta)
+    y = r * np.sin(theta)
+    return x, y, z
 
 
 def check_clockwise_order(nodes, cells):
@@ -607,6 +641,99 @@ def generate_faces_vtk(file_name, vtk_data):
                 for value in face_data[val_name]:
                     f.write("  "+str(value)+"\n")
 
+
+def generate_faces_h5(h5_path,
+                      data,
+                      mesh_group="/mesh",
+                      fields_group="/fields",
+                      compression="gzip",
+                      compression_opts=4,
+                      overwrite_datasets=True,
+                      ):
+    """Write a triangular mesh + per-cell / per-node fields to an HDF5 file.
+
+    Layout:
+      ``/mesh/nodes``           (n,3) float
+      ``/mesh/cells``           (m,3) int (triangles)
+      ``/fields/cells/<name>``  (m,)  field arrays on cells (keys ending in ``_cells``)
+      ``/fields/nodes/<name>``  (n,)  field arrays on nodes (keys ending in ``_nodes``)
+      ``/fields/misc/<name>``   any other 1D arrays the caller supplies
+    """
+    if "nodes" not in data or "cells" not in data:
+        raise KeyError('Expected at least "nodes" and "cells" in data.')
+
+    nodes = np.asarray(data["nodes"])
+    cells = np.asarray(data["cells"])
+
+    if nodes.ndim != 2 or nodes.shape[1] != 3:
+        raise ValueError(f'"nodes" must be (n,3); got {nodes.shape}')
+    if cells.ndim != 2 or cells.shape[1] != 3:
+        raise ValueError(f'"cells" must be (m,3); got {cells.shape}')
+
+    nodes = nodes.astype(np.float32, copy=False)
+    if np.issubdtype(cells.dtype, np.floating) and np.allclose(cells, np.round(cells)):
+        cells = np.round(cells).astype(np.int32)
+    else:
+        cells = cells.astype(np.int32, copy=False)
+
+    n = nodes.shape[0]
+    m = cells.shape[0]
+
+    nodes_chunks = (min(8192, n), 3)
+    cells_chunks = (min(16384, m), 3)
+    field_chunks_cells = (min(16384, m),)
+    field_chunks_nodes = (min(8192, n),)
+
+    def _create_or_replace(grp, name, arr, chunks):
+        if overwrite_datasets and name in grp:
+            del grp[name]
+        grp.create_dataset(
+            name,
+            data=arr,
+            dtype=arr.dtype,
+            chunks=chunks,
+            compression=compression,
+            compression_opts=compression_opts,
+            shuffle=True if compression else False,
+        )
+
+    with h5py.File(h5_path, "a") as h5:
+        g_mesh = h5.require_group(mesh_group)
+        g_fields = h5.require_group(fields_group)
+        g_cell_fields = g_fields.require_group("cells")
+        g_node_fields = g_fields.require_group("nodes")
+
+        g_mesh.attrs["format"] = "mesh_fields_v1"
+        g_mesh.attrs["nodes_shape"] = nodes.shape
+        g_mesh.attrs["cells_shape"] = cells.shape
+
+        _create_or_replace(g_mesh, "nodes", nodes, nodes_chunks)
+        _create_or_replace(g_mesh, "cells", cells, cells_chunks)
+
+        for k, v in data.items():
+            if k in ("nodes", "cells"):
+                continue
+            arr = np.asarray(v)
+            if arr.ndim == 2 and arr.shape[1] == 1:
+                arr = arr.reshape(-1)
+            if arr.ndim != 1:
+                raise ValueError(f'Field "{k}" must be 1D (or (N,1)); got shape {arr.shape}')
+
+            if k.endswith("_cells"):
+                if arr.shape[0] != m:
+                    raise ValueError(
+                        f'Field "{k}" length {arr.shape[0]} does not match n_cells={m}'
+                    )
+                _create_or_replace(g_cell_fields, k[:-6], arr, field_chunks_cells)
+            elif k.endswith("_nodes"):
+                if arr.shape[0] != n:
+                    raise ValueError(
+                        f'Field "{k}" length {arr.shape[0]} does not match n_nodes={n}'
+                    )
+                _create_or_replace(g_node_fields, k[:-6], arr, field_chunks_nodes)
+            else:
+                g_misc = g_fields.require_group("misc")
+                _create_or_replace(g_misc, k, arr, (min(16384, arr.shape[0]),))
 
 
 def generate_edges_vtk(file_name, vtk_data):
