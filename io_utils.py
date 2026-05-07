@@ -933,18 +933,15 @@ def read_vtk(file_name):
         # Read data fields
         for ln in f:
             line = ln
-            print(line.split())
             if line == '\n':
                 line = f.readline()
 
             if line.split()[0] == "POINT_DATA":
-                print("cell data")
                 point_data = True
                 cell_data = False
                 data_name = f.readline().split()[1]
 
             elif line.split()[0] == "CELL_DATA":
-                print("cell data")
                 point_data = False
                 cell_data = True
                 line = f.readline()
@@ -987,7 +984,6 @@ def read_vtk(file_name):
             elif cell_data:
                 data_set = []
                 i=0
-                print("scalar type", scalar_type, "vector type", vector_type)
                 for value in range(n_cells):
                     if scalar_type:
                         val = float(f.readline().split()[0])
