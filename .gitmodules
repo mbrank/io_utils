@@ -1,0 +1,3 @@
+[submodule "external/io_utils"]
+	path = external/io_utils
+	url = https://github.com/mbrank/io_utils.git
